@@ -123,6 +123,13 @@
         closeModalButton.onclick = () => errorModal.classList.add('hidden');
 
 
+        // --- Environment Check ---
+        console.log("Current page URL:", window.location.href);
+        if (window.location.protocol === 'file:') {
+            showErrorModal("<b>Error:</b> This page must be run from your Vercel deployment URL (e.g., https://your-project.vercel.app), not by opening the local HTML file directly. The crafting feature will not work otherwise.");
+        }
+
+
         // --- Initial Load ---
         // Draw the base elements immediately so the screen isn't blank on startup.
         initializeElements();
@@ -375,5 +382,6 @@
     </script>
 </body>
 </html>
+
 
 
