@@ -1,63 +1,433 @@
-// This is your new serverless function: api/combine.js
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Infinite Craft Clone</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+        }
+        .element-item {
+            cursor: grab;
+            user-select: none;
+            touch-action: none;
+        }
+        .element-item:active {
+            cursor: grabbing;
+        }
+        #crafting-area .element-item {
+            position: absolute;
+        }
+        .sidebar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+        .sidebar::-webkit-scrollbar {
+            display: none; /* Chrome, Safari and Opera */
+        }
+        #loading-spinner {
+            border-top-color: #3498db;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        #close-error-modal { font-size: 2rem; line-height: 1; }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex h-screen">
 
-export default async function handler(request, response) {
-    // 1. Check if the request method is POST
-    if (request.method !== 'POST') {
-        return response.status(405).json({ error: 'Method Not Allowed' });
-    }
+    <!-- Crafting Area -->
+    <main id="crafting-area" class="flex-1 h-screen relative bg-gray-800/50 overflow-hidden">
+        <!-- Elements will be dynamically added here -->
+    </main>
 
-    // 2. Get the elements from the request body
-    const { element1, element2 } = request.body;
+    <!-- Sidebar -->
+    <aside class="w-64 bg-gray-900/80 backdrop-blur-sm h-screen flex flex-col border-l border-gray-700">
+        <div class="p-4 border-b border-gray-700 flex justify-between items-center">
+            <h1 class="text-xl font-bold">Elements</h1>
+            <button id="clear-button" title="Clear Workspace" class="p-2 rounded-md hover:bg-gray-700 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20Z"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
+            </button>
+        </div>
+        <div class="p-2">
+             <input type="text" id="search-input" placeholder="Search elements..." class="w-full bg-gray-800 border border-gray-600 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+        <div id="elements-list" class="sidebar flex-1 overflow-y-auto p-2 grid grid-cols-2 gap-2 content-start">
+            <!-- Discovered elements will be listed here -->
+        </div>
+    </aside>
 
-    if (!element1 || !element2) {
-        return response.status(400).json({ error: 'Missing element1 or element2 in request body' });
-    }
+    <!-- Loading Indicator -->
+    <div id="loading-indicator" class="hidden fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-gray-900/80 backdrop-blur-sm p-6 rounded-lg z-50 flex flex-col items-center gap-4">
+        <div id="loading-spinner" class="w-12 h-12 border-4 border-gray-600 rounded-full"></div>
+        <p class="font-medium">Crafting...</p>
+    </div>
 
-    // 3. Get the secret API key from environment variables
-    const apiKey = process.env.GEMINI_API_KEY;
+    <!-- Error Modal -->
+    <div id="error-modal" class="hidden fixed top-0 left-0 w-full h-full bg-black/70 flex items-center justify-center z-50 p-4">
+        <div class="bg-gray-800 rounded-lg shadow-xl p-6 max-w-md w-full border border-red-500">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-bold text-red-400">Configuration Error</h3>
+                <button id="close-error-modal" class="text-gray-400 hover:text-white transition-colors">&times;</button>
+            </div>
+            <p id="error-message" class="text-gray-300"></p>
+        </div>
+    </div>
 
-    if (!apiKey) {
-        return response.status(500).json({ error: 'API key not configured on the server' });
-    }
 
-    // 4. Prepare the request to the real Gemini API
-    const model = "gemini-1.5-pro-latest";
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    <!-- Firebase and App Logic -->
+    <script type="module">
+        // Firebase Imports
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
 
-    const systemPrompt = "You are a helpful assistant for a crafting game. The user will provide two items. Respond with the single, most logical item that would result from combining them. Your response should be a short, 1-3 word answer, and must start with a relevant emoji. For example, if the user combines '💧 Water' and '🔥 Fire', a good response would be '💨 Steam'.";
-    const userQuery = `Combine: ${element1.trim()} and ${element2.trim()}`;
+        // =================================================================================
+        // STEP 1: PASTE YOUR FIREBASE CONFIGURATION HERE
+        // =================================================================================
+        // Go to your Firebase project settings, find your web app, and copy the config object.
+        const firebaseConfig = {
+            apiKey: "AIzaSyAagikqxsyHwpQxzb9uws-b-iEBuggJb4o",
+            authDomain: "inficrafi.firebaseapp.com",
+            projectId: "inficrafi",
+            storageBucket: "inficrafi.firebasestorage.app",
+            messagingSenderId: "669882443556",
+            appId: "1:669882443556:web:593addca63674eb23235b1",
+            measurementId: "G-116HLXEWGG"
+        };
+        // =================================================================================
 
-    const payload = {
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ parts: [{ text: userQuery }] }],
-    };
+        // DOM Elements
+        const craftingArea = document.getElementById('crafting-area');
+        const elementsList = document.getElementById('elements-list');
+        const clearButton = document.getElementById('clear-button');
+        const searchInput = document.getElementById('search-input');
+        const loadingIndicator = document.getElementById('loading-indicator');
+        const errorModal = document.getElementById('error-modal');
+        const errorMessage = document.getElementById('error-message');
+        const closeErrorModal = document.getElementById('close-error-modal');
 
-    // 5. Make the API call and send the response back to the frontend
-    try {
-        const geminiResponse = await fetch(apiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
 
-        if (!geminiResponse.ok) {
-            const errorText = await geminiResponse.text();
-            console.error("Gemini API Error:", errorText);
-            return response.status(geminiResponse.status).json({ error: 'Failed to fetch from Gemini API' });
+        // App State
+        let discoveredElements = new Set(['💧 Water', '🔥 Fire', '🌬️ Wind', '🌍 Earth']);
+        let db, auth;
+        let userId;
+        // Use a fixed App ID for your own project
+        const appId = 'infinite-craft-clone-vercel';
+
+        // --- Firebase Initialization ---
+        async function initializeFirebase() {
+            if (!firebaseConfig || firebaseConfig.apiKey === "YOUR_API_KEY") {
+                console.warn("Firebase config not found. Progress will not be saved. Please complete Step 1 in the code.");
+                renderElementsList();
+                return;
+            }
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        loadElementsFromFirestore();
+                    } else {
+                        try {
+                            // For a public project, anonymous sign-in is simplest
+                            await signInAnonymously(auth);
+                        } catch (error) {
+                            console.error("Anonymous sign-in failed:", error);
+                            if (error.code === 'auth/configuration-not-found') {
+                                showErrorModal(
+                                    'Firebase Anonymous Authentication is not enabled. Please go to your Firebase Console, click on "Authentication" under "Build", go to the "Sign-in method" tab, and enable the "Anonymous" provider.'
+                                );
+                            } else {
+                                showErrorModal(`An unexpected authentication error occurred: ${error.message}`);
+                            }
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error("Firebase initialization failed:", error);
+                renderElementsList();
+            }
         }
 
-        const result = await geminiResponse.json();
-        const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+        // --- Firestore Data Sync ---
+        function getElementsDocRef() {
+            if (!userId) return null;
+            // Simplified path for a custom project
+            return doc(db, `users/${userId}/elements`, 'discovered');
+        }
 
-        if (!text) {
-             return response.status(500).json({ error: 'Invalid response from Gemini API' });
+        function loadElementsFromFirestore() {
+            const docRef = getElementsDocRef();
+            if (!docRef) return;
+
+            onSnapshot(docRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    const firestoreElements = data.items || [];
+                    firestoreElements.forEach(item => discoveredElements.add(item));
+                } else {
+                    saveElementsToFirestore();
+                }
+                renderElementsList();
+            }, (error) => {
+                console.error("Error listening to Firestore:", error);
+                renderElementsList();
+            });
+        }
+
+        async function saveElementsToFirestore() {
+            const docRef = getElementsDocRef();
+            if (!docRef) return;
+            try {
+                await setDoc(docRef, { items: Array.from(discoveredElements).sort() });
+            } catch (error)
+            {
+                console.error("Error saving to Firestore:", error);
+            }
+        }
+
+
+        // --- Gemini API Call ---
+        async function combineElements(element1, element2) {
+            // No API key is needed in the frontend anymore.
+            // This function now calls our own serverless function.
+
+            loadingIndicator.classList.remove('hidden');
+            
+            // The new URL points to our serverless function
+            const apiUrl = '/api/combine';
+
+            const payload = {
+                element1: element1,
+                element2: element2,
+            };
+            
+            try {
+                 const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `API Error: ${response.statusText}`);
+                }
+
+                const result = await response.json();
+                const text = result.result; // The serverless function returns the text in a 'result' property
+                
+                if (!text) {
+                    throw new Error("Invalid response from our serverless function");
+                }
+                
+                return text.trim();
+
+            } catch (error) {
+                console.error("Error combining elements:", error);
+                return "💨 Puff of Logic"; // Fallback result
+            } finally {
+                loadingIndicator.classList.add('hidden');
+            }
+        }
+
+
+        // --- UI Rendering ---
+        function renderElementsList() {
+            const sortedElements = Array.from(discoveredElements).sort();
+            const filteredElements = sortedElements.filter(el => 
+                el.toLowerCase().includes(searchInput.value.toLowerCase())
+            );
+
+            elementsList.innerHTML = '';
+            filteredElements.forEach(elementText => {
+                const el = document.createElement('div');
+                el.textContent = elementText;
+                el.className = 'element-item bg-gray-800 p-2 rounded-md text-center font-medium shadow-md border border-gray-700 hover:bg-gray-700 transition-colors';
+                el.draggable = true;
+                el.addEventListener('dragstart', handleDragStart);
+                elementsList.appendChild(el);
+            });
+        }
+
+        function createCraftingElement(text, x, y) {
+            const el = document.createElement('div');
+            el.textContent = text;
+            el.className = 'element-item bg-blue-600 p-3 rounded-lg text-lg font-semibold shadow-xl border-2 border-blue-400';
+            el.style.left = `${x}px`;
+            el.style.top = `${y}px`;
+
+            let offsetX, offsetY;
+
+            const move = (e) => {
+                e.preventDefault();
+                let clientX = e.clientX || e.touches[0].clientX;
+                let clientY = e.clientY || e.touches[0].clientY;
+                el.style.left = `${clientX - offsetX}px`;
+                el.style.top = `${clientY - offsetY}px`;
+            };
+
+            const stopMove = async (e) => {
+                document.removeEventListener('mousemove', move);
+                document.removeEventListener('mouseup', stopMove);
+                document.removeEventListener('touchmove', move);
+                document.removeEventListener('touchend', stopMove);
+
+                // Get the final cursor position
+                let clientX = e.clientX;
+                let clientY = e.clientY;
+                if (e.changedTouches && e.changedTouches.length > 0) {
+                    clientX = e.changedTouches[0].clientX;
+                    clientY = e.changedTouches[0].clientY;
+                }
+
+                // Briefly hide the element to detect what's underneath it
+                el.style.pointerEvents = 'none';
+                const elementBelow = document.elementFromPoint(clientX, clientY);
+                el.style.pointerEvents = 'auto';
+
+                const dropTarget = elementBelow ? elementBelow.closest('#crafting-area .element-item') : null;
+
+                // Check if we dropped on another element in the crafting area
+                if (dropTarget && dropTarget !== el) {
+                    const newElementText = await combineElements(el.textContent, dropTarget.textContent);
+
+                    if (newElementText) {
+                        const rect = craftingArea.getBoundingClientRect();
+                        const x = clientX - rect.left;
+                        const y = clientY - rect.top;
+
+                        const newElement = createCraftingElement(newElementText, 0, 0);
+                        // Center the new element on the cursor
+                        newElement.style.left = `${x - newElement.offsetWidth / 2}px`;
+                        newElement.style.top = `${y - newElement.offsetHeight / 2}px`;
+                        craftingArea.appendChild(newElement);
+
+                        // Remove the two combined elements
+                        el.remove();
+                        dropTarget.remove();
+
+                        // Animate the new element appearing
+                        newElement.style.transform = 'scale(0.5)';
+                        requestAnimationFrame(() => {
+                            newElement.style.transition = 'transform 0.2s ease-out';
+                            newElement.style.transform = 'scale(1)';
+                        });
+
+                        // Save if it's a new discovery
+                        if (!discoveredElements.has(newElementText)) {
+                            discoveredElements.add(newElementText);
+                            await saveElementsToFirestore();
+                            renderElementsList();
+                        }
+                    }
+                }
+            };
+
+            const startMove = (e) => {
+                 let clientX = e.clientX || e.touches[0].clientX;
+                 let clientY = e.clientY || e.touches[0].clientY;
+                 offsetX = clientX - el.offsetLeft;
+                 offsetY = clientY - el.offsetTop;
+                 document.addEventListener('mousemove', move);
+                 document.addEventListener('mouseup', stopMove);
+                 document.addEventListener('touchmove', move);
+                 document.addEventListener('touchend', stopMove);
+            };
+
+            el.addEventListener('mousedown', startMove);
+            el.addEventListener('touchstart', startMove);
+            
+            return el;
+        }
+
+        // --- Drag and Drop Handlers ---
+        function handleDragStart(e) {
+            e.dataTransfer.setData('text/plain', e.target.textContent);
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+        }
+
+        async function handleDrop(e) {
+            e.preventDefault();
+            const draggedText = e.dataTransfer.getData('text/plain');
+
+            if (!draggedText) return;
+
+            const rect = craftingArea.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            const dropTarget = e.target.closest('.element-item');
+            
+            if (dropTarget && dropTarget.parentElement === craftingArea) {
+                // Combining elements
+                const targetText = dropTarget.textContent;
+                const newElementText = await combineElements(draggedText, targetText);
+
+                if (newElementText) {
+                    const newElement = createCraftingElement(newElementText, parseFloat(dropTarget.style.left), parseFloat(dropTarget.style.top));
+                    craftingArea.appendChild(newElement);
+
+                    // Animation for combination
+                    dropTarget.remove();
+                    newElement.style.transform = 'scale(0.5)';
+                    requestAnimationFrame(() => {
+                        newElement.style.transition = 'transform 0.2s ease-out';
+                        newElement.style.transform = 'scale(1)';
+                    });
+
+
+                    if (!discoveredElements.has(newElementText)) {
+                        discoveredElements.add(newElementText);
+                        await saveElementsToFirestore();
+                        renderElementsList(); // Will re-render with the new element
+                    }
+                }
+            } else {
+                // Dropping a new element onto the canvas
+                const newEl = createCraftingElement(draggedText, x, y);
+                // Adjust position to center on cursor
+                newEl.style.left = `${x - newEl.offsetWidth / 2}px`;
+                newEl.style.top = `${y - newEl.offsetHeight / 2}px`;
+                craftingArea.appendChild(newEl);
+            }
+        }
+
+        // --- Modal Helpers ---
+        function showErrorModal(message) {
+            errorMessage.textContent = message;
+            errorModal.classList.remove('hidden');
+        }
+
+        function hideErrorModal() {
+            errorModal.classList.add('hidden');
         }
         
-        // Send the successful result back to your frontend
-        return response.status(200).json({ result: text.trim() });
+        // --- Event Listeners ---
+        craftingArea.addEventListener('dragover', handleDragOver);
+        craftingArea.addEventListener('drop', handleDrop);
+        clearButton.addEventListener('click', () => {
+            craftingArea.innerHTML = '';
+        });
+        searchInput.addEventListener('input', renderElementsList);
+        closeErrorModal.addEventListener('click', hideErrorModal);
 
-    } catch (error) {
-        console.error("Internal Server Error:", error);
-        return response.status(500).json({ error: 'An internal error occurred' });
-    }
-}
+        // --- Initial Load ---
+        initializeFirebase();
+    </script>
+</body>
+</html>
+
+
