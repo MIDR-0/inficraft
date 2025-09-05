@@ -123,6 +123,11 @@
         closeModalButton.onclick = () => errorModal.classList.add('hidden');
 
 
+        // --- Initial Load ---
+        // Draw the base elements immediately so the screen isn't blank on startup.
+        initializeElements();
+
+
         // --- Authentication ---
         onAuthStateChanged(auth, async (user) => {
             if (user) {
@@ -370,4 +375,5 @@
     </script>
 </body>
 </html>
+
 
